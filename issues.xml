@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<issueEntity>
+    <summary>entrysummary</summary>
+    <key>entrykey</key>
+    <uri>https://jira.atlassian.com</uri>
+    <type>entrytype</type>
+    <priority>enrtypriority</priority>
+    <description>entrydescription</description>
+    <reporterName>entryreporter</reporterName>
+    <creationDate>2017-03-11</creationDate>
+    <comments>
+        <authorName>entryauthorname1</authorName>
+        <text>entrycommentbody1</text>
+    </comments>
+    <comments>
+        <authorName>entryauthorname2</authorName>
+        <text>entrycommentbody2</text>
+    </comments>
+</issueEntity>
+

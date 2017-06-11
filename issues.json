@@ -1,0 +1,22 @@
+[
+  {
+    "summary": "entrysummary",
+    "key": "entrykey",
+    "uri": "https://jira.atlassian.com",
+    "type": "entrytype",
+    "priority": "enrtypriority",
+    "description": "entrydescription",
+    "reporterName": "entryreporter",
+    "creationDate": "2017-03-11",
+    "comments": [
+      {
+        "text": "entrycommentbody1",
+        "authorName": "entryauthorname1"
+      },
+      {
+        "text": "entrycommentbody2",
+        "authorName": "entryauthorname2"
+      }
+    ]
+  }
+]
