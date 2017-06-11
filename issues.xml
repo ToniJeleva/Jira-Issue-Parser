@@ -1,20 +1,401 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <issueEntity>
-    <summary>entrysummary</summary>
-    <key>entrykey</key>
-    <uri>https://jira.atlassian.com</uri>
-    <type>entrytype</type>
-    <priority>enrtypriority</priority>
-    <description>entrydescription</description>
-    <reporterName>entryreporter</reporterName>
-    <creationDate>2017-03-11</creationDate>
-    <comments>
-        <authorName>entryauthorname1</authorName>
-        <text>entrycommentbody1</text>
-    </comments>
-    <comments>
-        <authorName>entryauthorname2</authorName>
-        <text>entrycommentbody2</text>
-    </comments>
+    <summary>On startup sourcetree consumes a lot of resources (memory)</summary>
+    <key>SRCTREEWIN-7438</key>
+    <uri>https://jira.atlassian.com/rest/api/latest/issue/808507</uri>
+    <type>Bug</type>
+    <priority>Highest</priority>
+    <reporterName>duncan chiriga</reporterName>
+    <creationDate>2017-06-11</creationDate>
 </issueEntity>
 
+<issueEntity>
+    <summary>JiraHostConnectionAccessor does not reuse the same connection in nested calls</summary>
+    <key>JRASERVER-61818</key>
+    <uri>https://jira.atlassian.com/rest/api/latest/issue/614559</uri>
+    <type>Bug</type>
+    <priority>Low</priority>
+    <description>{panel:bgColor=#e7f4fa}
+  *NOTE:* This bug report is for *JIRA Server*. Using *JIRA Cloud*? [See the corresponding bug report|http://jira.atlassian.com/browse/JRACLOUD-61818].
+  {panel}
+
+I have this use case in Fusion DVCS Connector where I need to execute two DAO calls within the same transaction through _com.atlassian.pocketknife.api.querydsl.DatabaseAccessor_ (atlassian pocketknife query-dsl library) :
+
+{code}
+        return databaseAccessor.runInTransaction(connection -&gt; {
+            Message&lt;P&gt; createdMessage = messageDao.create(message, tags);
+            requireNonNull(createdMessage.getId());
+
+            for (MessageQueueItem item : messageItems) {
+                messageQueueItemDao.create(item, createdMessage);
+            }
+            return createdMessage;
+        });
+{code}
+
+_messageDao.create_ and _messageQueueItemDao.create_ run the SQL within _databaseAccessor.runInTransaction_ as well, e.g. in _MessageDao_ implementation : 
+
+{code}
+    public Message create(final Message message, final String[] tags) {
+        Integer id = databaseAccessor.runInTransaction(connection -&gt; {
+             // SQL query DSL insert code goes here
+             return id;
+        });
+        message.setTags(tags);
+        message.setId(id);
+        return message;
+    }
+{code}
+
+Problem in the main code is that _messageDao.create_ and _messageQueueItemDao.create_ run with different connections and therefore NOT in the same transaction as expected. 
+
+Digging out deeper, _databaseAccessor.runInTransaction_ calls _JiraHostConnectionAccessor.execute(false, false, callback)_ which sits in JIRA SAL Plugin :
+
+{code}
+    public &lt;A&gt; A execute(final boolean readOnly, final boolean newTransaction, @Nonnull final ConnectionCallback&lt;A&gt; callback) {
+        if (newTransaction) {
+            // Need to borrow a connection from the pool and start a new transaction
+            return borrowConnectionAndExecute(readOnly, callback);
+        } else {
+            final Connection existingConnection = CoreTransactionUtil.getConnection();
+            if (existingConnection == null) {
+                // no current transaction in OfBiz
+                return borrowConnectionAndExecute(readOnly, callback);
+            } else {
+                // Developer has requested to participate in existing transaction, and OfBiz actually has one running ...
+                // I don't think it is a good idea to set read-only on an existing transaction ... ignoring
+                return executeInExistingTransaction(callback, existingConnection);
+            }
+        }
+    }
+
+    private &lt;A&gt; A borrowConnectionAndExecute(final boolean readOnly, final ConnectionCallback&lt;A&gt; callback) {
+        return databaseAccessor.executeQuery(connection -&gt; {
+                    // By contract must run in a Transaction
+                    connection.setAutoCommit(false);
+                    try {
+                        connection.getJdbcConnection().setReadOnly(readOnly);
+                    } catch (SQLException e) {
+                        throw new DataAccessException(e);
+                    }
+                    // If this returns successfully then SAL's DefaultTransactionalExecutor will commit the transaction
+                    // If it throws RuntimeException then DatabaseAcccessor and DefaultTransactionalExecutor will both
+                    // cause a rollback() ... seems harmless.
+                    try {
+                        return callback.execute(connection.getJdbcConnection());
+                    } finally {
+                        if (readOnly) {
+                            // Need to return the connection to the default state of NOT read-only.
+                            try {
+                                connection.getJdbcConnection().setReadOnly(false);
+                            } catch (SQLException ex) {
+                                log.error("Unable to unset the read-only flag on a borrowed DB Connection ... chaos will ensue.", ex);
+                            }
+                        }
+                        // Connection Pool will set default auto-commit mode
+                    }
+                }
+        );
+    }
+{code}
+
+The nested call does not reuse the same connection because _CoreTransactionUtil.getConnection_ tries to get "existing" connection from a _ThreadLocal_ variable but _borrowConnectionAndExecute_ code does not put any connection in the _ThreadLocal_ for further re-use.
+
+I resolved this problem in my code by passing the connection to both DAOs methods.
+
+Other developers may assume _databaseAccessor.runInTransaction_ and _JiraHostConnectionAccessor.execute_ handle nested calls properly therefore if you do not intend to fix this problem please update the API documentation at least.</description>
+    <reporterName>Eduardo Soares</reporterName>
+    <creationDate>2016-07-08</creationDate>
+</issueEntity>
+<issueEntity>
+    <summary>When customers are using IE or Edge, they receive the "Something has gone wrong  Atlassian account"</summary>
+    <key>ID-6297</key>
+    <uri>https://jira.atlassian.com/rest/api/latest/issue/793074</uri>
+    <type>Bug</type>
+    <priority>Low</priority>
+    <description>h3. Summary
+
+Users using IE 11 or Edge while having Atlassian Account enabled in their instance depending on the cookie level of security could receive "Something has gone wrong Atlassian account" while trying to logging in.
+h3. How to reproduce
+ # User's go to their instance with AA enabled.
+ # They are redirected to the ID portal.
+ # They input their email and password and when they got redirected to their instance the error message appears on the screen.
+
+h3. Expected Results
+ # Users are redirected and are able to log in without problems.
+
+h3. Actual Results
+ # Users receives the error message "Something has gone wrong Atlassian account".
+
+h3. Workaround
+ # Use another browser
+ # Try cleaning cache and cookies on IE or edge
+ # Lower the cookie security settings in the "Privacy" tab on the browser configurations section.
+ # Add [https://id.atlassian.com|https://id.atlassian.com%2A/] to trusted sites on the "Security" tab under IE Internet Settings.
+ # Enabling the Protected Mode to on in IE could mitigate the problem.
+
+Please note that the workaround options 2,3,4,5 might not work.</description>
+    <reporterName>Daniel Brito</reporterName>
+    <creationDate>2017-04-07</creationDate>
+</issueEntity>
+<issueEntity>
+    <summary>Back button in browser with anchor links behaves incorrectly</summary>
+    <key>CONFSERVER-52497</key>
+    <uri>https://jira.atlassian.com/rest/api/latest/issue/804382</uri>
+    <type>Bug</type>
+    <priority>Low</priority>
+    <description>h3. Summary
+Back button in browser does not return to previous page when using URL with anchor link
+
+h3. Environment
+* Any browser
+* Confluence 6.2.1
+
+h3. Steps to Reproduce
+# Create Page A with content that scrolls beyond the bottom of the screen, with several headings in the content that also go below the fold
+# Add a table of content macro at the top of Page A
+# Create Page B and insert *Web Links* with anchors from the table of contents to point to headings on Page A after the fold, for example
+#* http://confluence.mycompany.com/display/CONF/PageA#HeadingSix
+# Save Page B
+# Click on the link to go to Page A with the anchor
+# Click the back button in the broswer
+
+h3. Expected Results
+The browser goes back to page
+
+h3. Actual Results
+You need to click twice to return to the previous page
+ 
+h3.Workaround
+There is no workaround at this time.</description>
+    <reporterName>James Richards</reporterName>
+    <creationDate>2017-05-30</creationDate>
+</issueEntity>
+<issueEntity>
+    <summary>Unable to start the plugin container for plugin 'com.atlassian.upm.plugin-license-storage-plugin' after upgrade to Confluence 6.x</summary>
+    <key>CONFSERVER-51958</key>
+    <uri>https://jira.atlassian.com/rest/api/latest/issue/673594</uri>
+    <type>Bug</type>
+    <priority>High</priority>
+    <description>h3. Steps to reproduce
+ # Install Confluence 5.x;
+ # Upgrade "Atlassian Universal Plugin Manager - Plugin License Storage plugin";
+ # Upgrade Confluence to 6.x;
+
+*Expected results*
+
+No errors are thrown.
+
+*Actual results*
+{noformat:title=atlassian-confluence.log}
+2017-03-16 17:07:07,764 ERROR [ThreadPoolAsyncTaskExecutor::Thread 24] [plugin.osgi.factory.OsgiPlugin] onPluginContainerFailed Unable to start the plugin container for plugin 'com.atlassian.upm.plugin-license-storage-plugin'
+ -- referer: https://wiki.wiki.com/plugins/servlet/upm/manage/all | url: /rest/plugins/1.0/com.atlassian.upm.plugin-license-storage-plugin-key | traceId: 1fe445b981f47ecc | userName: billy
+org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'licenseReceiptValidator' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 0 of type [com.atlassian.upm.license.internal.PluginLicenseRepository]: Error creating bean with name 'pluginLicenseRepository' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 0 of type [com.atlassian.upm.license.internal.HostLicenseProvider]: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'pluginLicenseRepository' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 0 of type [com.atlassian.upm.license.internal.HostLicenseProvider]: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder
+	at org.springframework.beans.factory.support.ConstructorResolver.createArgumentArray(ConstructorResolver.java:749)
+	at org.springframework.beans.factory.support.ConstructorResolver.autowireConstructor(ConstructorResolver.java:185)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.autowireConstructor(AbstractAutowireCapableBeanFactory.java:1143)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBeanInstance(AbstractAutowireCapableBeanFactory.java:1046)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.doCreateBean(AbstractAutowireCapableBeanFactory.java:510)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBean(AbstractAutowireCapableBeanFactory.java:482)
+	at org.springframework.beans.factory.support.AbstractBeanFactory$1.getObject(AbstractBeanFactory.java:306)
+	at org.springframework.beans.factory.support.DefaultSingletonBeanRegistry.getSingleton(DefaultSingletonBeanRegistry.java:230)
+	at org.springframework.beans.factory.support.AbstractBeanFactory.doGetBean(AbstractBeanFactory.java:302)
+	at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:197)
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.preInstantiateSingletons(DefaultListableBeanFactory.java:772)
+	at org.springframework.context.support.AbstractApplicationContext.finishBeanFactoryInitialization(AbstractApplicationContext.java:839)
+	at org.eclipse.gemini.blueprint.context.support.AbstractDelegatedExecutionApplicationContext.access$1600(AbstractDelegatedExecutionApplicationContext.java:60)
+	at org.eclipse.gemini.blueprint.context.support.AbstractDelegatedExecutionApplicationContext$4.run(AbstractDelegatedExecutionApplicationContext.java:325)
+	at org.eclipse.gemini.blueprint.util.internal.PrivilegedUtils.executeWithCustomTCCL(PrivilegedUtils.java:85)
+	at org.eclipse.gemini.blueprint.context.support.AbstractDelegatedExecutionApplicationContext.completeRefresh(AbstractDelegatedExecutionApplicationContext.java:290)
+	at org.eclipse.gemini.blueprint.extender.internal.dependencies.startup.DependencyWaiterApplicationContextExecutor$CompleteRefreshTask.run(DependencyWaiterApplicationContextExecutor.java:137)
+	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1142)
+	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:617)
+	at java.lang.Thread.run(Thread.java:745)
+Caused by: org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'pluginLicenseRepository' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 0 of type [com.atlassian.upm.license.internal.HostLicenseProvider]: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder
+	at org.springframework.beans.factory.support.ConstructorResolver.createArgumentArray(ConstructorResolver.java:749)
+	at org.springframework.beans.factory.support.ConstructorResolver.autowireConstructor(ConstructorResolver.java:185)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.autowireConstructor(AbstractAutowireCapableBeanFactory.java:1143)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBeanInstance(AbstractAutowireCapableBeanFactory.java:1046)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.doCreateBean(AbstractAutowireCapableBeanFactory.java:510)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBean(AbstractAutowireCapableBeanFactory.java:482)
+	at org.springframework.beans.factory.support.AbstractBeanFactory$1.getObject(AbstractBeanFactory.java:306)
+	at org.springframework.beans.factory.support.DefaultSingletonBeanRegistry.getSingleton(DefaultSingletonBeanRegistry.java:230)
+	at org.springframework.beans.factory.support.AbstractBeanFactory.doGetBean(AbstractBeanFactory.java:302)
+	at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:197)
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.findAutowireCandidates(DefaultListableBeanFactory.java:1192)
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.doResolveDependency(DefaultListableBeanFactory.java:1116)
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.resolveDependency(DefaultListableBeanFactory.java:1014)
+	at org.springframework.beans.factory.support.ConstructorResolver.resolveAutowiredArgument(ConstructorResolver.java:813)
+	at org.springframework.beans.factory.support.ConstructorResolver.createArgumentArray(ConstructorResolver.java:741)
+	... 19 more
+Caused by: org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder
+	at org.springframework.beans.factory.support.ConstructorResolver.createArgumentArray(ConstructorResolver.java:749)
+	at org.springframework.beans.factory.support.ConstructorResolver.autowireConstructor(ConstructorResolver.java:185)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.autowireConstructor(AbstractAutowireCapableBeanFactory.java:1143)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBeanInstance(AbstractAutowireCapableBeanFactory.java:1046)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.doCreateBean(AbstractAutowireCapableBeanFactory.java:510)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBean(AbstractAutowireCapableBeanFactory.java:482)
+	at org.springframework.beans.factory.support.AbstractBeanFactory$1.getObject(AbstractBeanFactory.java:306)
+	at org.springframework.beans.factory.support.DefaultSingletonBeanRegistry.getSingleton(DefaultSingletonBeanRegistry.java:230)
+	at org.springframework.beans.factory.support.AbstractBeanFactory.doGetBean(AbstractBeanFactory.java:302)
+	at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:197)
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.findAutowireCandidates(DefaultListableBeanFactory.java:1192)
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.doResolveDependency(DefaultListableBeanFactory.java:1116)
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.resolveDependency(DefaultListableBeanFactory.java:1014)
+	at org.springframework.beans.factory.support.ConstructorResolver.resolveAutowiredArgument(ConstructorResolver.java:813)
+	at org.springframework.beans.factory.support.ConstructorResolver.createArgumentArray(ConstructorResolver.java:741)
+	... 33 more
+Caused by: org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.instantiateBean(AbstractAutowireCapableBeanFactory.java:1105)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBeanInstance(AbstractAutowireCapableBeanFactory.java:1050)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.doCreateBean(AbstractAutowireCapableBeanFactory.java:510)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBean(AbstractAutowireCapableBeanFactory.java:482)
+	at org.springframework.beans.factory.support.AbstractBeanFactory$1.getObject(AbstractBeanFactory.java:306)
+	at org.springframework.beans.factory.support.DefaultSingletonBeanRegistry.getSingleton(DefaultSingletonBeanRegistry.java:230)
+	at org.springframework.beans.factory.support.AbstractBeanFactory.doGetBean(AbstractBeanFactory.java:302)
+	at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:197)
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.findAutowireCandidates(DefaultListableBeanFactory.java:1192)
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.doResolveDependency(DefaultListableBeanFactory.java:1116)
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.resolveDependency(DefaultListableBeanFactory.java:1014)
+	at org.springframework.beans.factory.support.ConstructorResolver.resolveAutowiredArgument(ConstructorResolver.java:813)
+	at org.springframework.beans.factory.support.ConstructorResolver.createArgumentArray(ConstructorResolver.java:741)
+	... 47 more
+Caused by: org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder
+	at org.springframework.beans.BeanUtils.instantiateClass(BeanUtils.java:163)
+	at org.springframework.beans.factory.support.SimpleInstantiationStrategy.instantiate(SimpleInstantiationStrategy.java:89)
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.instantiateBean(AbstractAutowireCapableBeanFactory.java:1098)
+	... 59 more
+Caused by: java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder
+	at com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl.&lt;init&gt;(LicenseManagerProviderImpl.java:40)
+	at sun.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method)
+	at sun.reflect.NativeConstructorAccessorImpl.newInstance(NativeConstructorAccessorImpl.java:62)
+	at sun.reflect.DelegatingConstructorAccessorImpl.newInstance(DelegatingConstructorAccessorImpl.java:45)
+	at java.lang.reflect.Constructor.newInstance(Constructor.java:423)
+	at org.springframework.beans.BeanUtils.instantiateClass(BeanUtils.java:147)
+	... 61 more
+2017-03-16 17:07:17,795 ERROR [ThreadPoolAsyncTaskExecutor::Thread 24] [internal.util.concurrent.RunnableTimedExecution] execute Closing runnable for context NonValidatingOsgiBundleXmlApplicationContext(bundle=com.atlassian.upm.plugin-license-storage-plugin, config=osgibundle:/META-INF/spring/*.xml) did not finish in 10000ms; consider taking a snapshot and then shutdown the VM in case the thread still hangs
+ -- referer: https://wiki.wiki.com/plugins/servlet/upm/manage/all | url: /rest/plugins/1.0/com.atlassian.upm.plugin-license-storage-plugin-key | traceId: 1fe445b981f47ecc | userName: billy
+2017-03-16 17:07:17,842 WARN [ThreadPoolAsyncTaskExecutor::Thread 24] [confluence.util.profiling.DurationThresholdWarningTimingHelperFactory] logMessage Execution time for publishing event com.atlassian.plugin.event.events.PluginContainerFailedEvent@2ea04998 took 10077 ms (warning threshold is 5000 ms)
+ -- referer: https://wiki.wiki.com/plugins/servlet/upm/manage/all | url: /rest/plugins/1.0/com.atlassian.upm.plugin-license-storage-plugin-key | traceId: 1fe445b981f47ecc | userName: billy
+2017-03-16 17:07:17,842 ERROR [ThreadPoolAsyncTaskExecutor::Thread 24] [extender.internal.support.ExtenderConfiguration] onOsgiApplicationEvent Application context refresh failed (NonValidatingOsgiBundleXmlApplicationContext(bundle=com.atlassian.upm.plugin-license-storage-plugin, config=osgibundle:/META-INF/spring/*.xml))
+ -- referer: https://wiki.wiki.com/plugins/servlet/upm/manage/all | url: /rest/plugins/1.0/com.atlassian.upm.plugin-license-storage-plugin-key | traceId: 1fe445b981f47ecc | userName: billy
+org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'licenseReceiptValidator' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 0 of type [com.atlassian.upm.license.internal.PluginLicenseRepository]: Error creating bean with name 'pluginLicenseRepository' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 0 of type [com.atlassian.upm.license.internal.HostLicenseProvider]: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'pluginLicenseRepository' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 0 of type [com.atlassian.upm.license.internal.HostLicenseProvider]: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'confluenceHostLicenseProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Unsatisfied dependency expressed through constructor argument with index 1 of type [com.atlassian.upm.license.internal.LicenseManagerProvider]: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder; nested exception is org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'licenseManagerProvider' defined in URL [bundle://206.0:0/META-INF/spring/atlassian-plugins-components.xml]: Instantiation of bean failed; nested exception is org.springframework.beans.BeanInstantiationException: Failed to instantiate [com.atlassian.upm.license.internal.impl.LicenseManagerProviderImpl]: Constructor threw exception; nested exception is java.lang.NoClassDefFoundError: Could not initialize class com.atlassian.extras.decoder.v1.Version1LicenseDecoder
+{noformat}
+!ss.png|thumbnail!
+
+When we upgrade a system plugin, Confluence handles it as "User Installed" and stores the data in the *PLUGINDATA* table. Since 'com.atlassian.upm.plugin-license-storage-plugin' has been unbundled from Confluence 6.x, it fails to load the *PLUGINDATA* entry.
+
+*Workaround*
+
+(!) Always backup the database before any changes.
+ # Shutdown Confluence;
+ # Ensure that there's an entry of this plugin in the PLUGINDATA table
+{code:sql}
+select * from PLUGINDATA where PLUGINKEY='com.atlassian.upm.plugin-license-storage-plugin';
+{code}
+ # Delete the bad entry in PLUGINDATA  by executing the following DELETE statement:
+{code:sql}
+delete from PLUGINDATA where PLUGINKEY='com.atlassian.upm.plugin-license-storage-plugin';
+{code}
+
+ # *[Clear Confluence plugin cache|https://confluence.atlassian.com/display/CONFKB/How+to+clear+Confluence+plugins+cache]*;
+ # Start Confluence;</description>
+    <reporterName>Lucas Machado</reporterName>
+    <creationDate>2017-03-22</creationDate>
+</issueEntity>
+<issueEntity>
+    <summary>When Space XML Imports Fail, Partial Space Data is Left in the Database</summary>
+    <key>CONFSERVER-31528</key>
+    <uri>https://jira.atlassian.com/rest/api/latest/issue/305808</uri>
+    <type>Bug</type>
+    <priority>Medium</priority>
+    <description>{panel:bgColor=#e7f4fa}
+  *NOTE:* This bug report is for *Confluence Server*. Using *Confluence Cloud*? [See the corresponding bug report|http://jira.atlassian.com/browse/CONFCLOUD-31528].
+  {panel}
+
+Space XML imports will sometimes fail due to a variety of reasons:
+* Confluence runs out of memory
+* The import process times out
+* Unique key constraint violations
+* A few other causes are described in https://confluence.atlassian.com/display/DOC/Troubleshooting+XML+backups+that+fail+on+restore
+
+Oftentimes these partially imported spaces remain in the DB without any way to remove them via the UI, making a re-import attempt impossible (due to a duplicate Space Key or other constraint violation).
+
+Can we investigate:
+- some way to rollback a failed XML space import (or determine whether imports will fail before it starts)?
+- possibilities for Confluence to automatically recognise half-imported Spaces and delete related data from the UI?
+
+*Current workaround:* [How to Manually Delete a Space|https://confluence.atlassian.com/display/CONFKB/How+to+Manually+Delete+a+Space] (Cloud users will need to contact Atlassian Support and request removing the Space from Confluence database)</description>
+    <reporterName>Robert Chang</reporterName>
+    <creationDate>2013-11-07</creationDate>
+</issueEntity>
+<issueEntity>
+    <summary>Users are Unable to Upload Attachments to Confluence Questions Posts</summary>
+    <key>CONFCLOUD-55333</key>
+    <uri>https://jira.atlassian.com/rest/api/latest/issue/806914</uri>
+    <type>Bug</type>
+    <priority>Low</priority>
+    <description>h3. Summary
+Some users are unable to upload file attachments to Confluence Questions posts either during Creation, Commenting, or when Providing an Answer. 
+
+h3. Environment
+* Cloud -  
+
+h3. Steps to Reproduce
+As a Non-Admin User: 
+# Login to Confluence and ask a New Confluence Question
+# Attempt to add an Attachment to your Question (via Upload or Drag and Drop)
+
+Or:
+# View an existing Confluence Question
+# Add an Answer or Comment and try to upload an Attachment (via Upload or Drag and Drop)
+
+h3. Expected Results
+Attachment is added to the Question/Answer/Comment
+
+h3. Actual Results
+Browser Developer Console shows a 403 Error when the user tries to upload the file
+{noformat}POST https://INSTANCE.atlassian.net/wiki/rest/drag-and-drop/1/filestore/upload/validate 403 ()
+(anonymous)
+XMLHttpRequest.send @ batch.js?acjsFiveVersionEnabled=true&amp;build-number=6452&amp;locale=en-GB:2049
+send @ jquery-min.js:3
+ajax @ jquery-min.js:3
+d.filesAdded @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/a04171f99aeb0f79…der/com.atlassian.confluence.plugins.drag-and-drop:filestore-uploader.js:7
+f @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/2960a5637b7b3bfe…onfluence.plugins.drag-and-drop:drag-and-drop-for-editor.js?locale=en-GB:7
+filterFiles @ com.atlassian.confluence.plugins.drag-and-drop:upload-utils.js:6
+(anonymous) @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/2960a5637b7b3bfe…onfluence.plugins.drag-and-drop:drag-and-drop-for-editor.js?locale=en-GB:9
+trigger @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/7047bd2ac58f8bf4…/confluence.web.resources:plupload/confluence.web.resources:plupload.js:23
+(anonymous) @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/0f450b38f8ab880b…an.confluence.plugins.drag-and-drop:default-drop-handler.js?locale=en-GB:9
+trigger @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/7047bd2ac58f8bf4…/confluence.web.resources:plupload/confluence.web.resources:plupload.js:23
+k @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/7047bd2ac58f8bf4…/confluence.web.resources:plupload/confluence.web.resources:plupload.js:47
+(anonymous) @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/7047bd2ac58f8bf4…/confluence.web.resources:plupload/confluence.web.resources:plupload.js:53
+batch.js:111 AJS's create element functionality has been deprecated since 5.9.0.
+No alternative will be provided.
+Use document.createElement() or jQuery.parseHTML(), or preferably use a templating library.
+a.default @ batch.js:111
+a @ batch.js:467
+b @ batch.js:787
+f.show @ batch.js:804
+show @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/5cd471106529f157….confluence.plugins.drag-and-drop:upload-progress-dialog.js?locale=en-GB:7
+(anonymous) @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/2960a5637b7b3bfe…onfluence.plugins.drag-and-drop:drag-and-drop-for-editor.js?locale=en-GB:8
+d @ jquery-min.js:1
+fireWith @ jquery-min.js:1
+fire @ jquery-min.js:1
+(anonymous) @ /wiki/s/d41d8cd98f00b204e9800998ecf8427e-CDN/-2083900483/h/a04171f99aeb0f79…der/com.atlassian.confluence.plugins.drag-and-drop:filestore-uploader.js:7
+d @ jquery-min.js:1
+fireWith @ jquery-min.js:1
+r @ jquery-min.js:3
+r @ jquery-min.js:3{noformat}
+
+The UI shows a message stating:
+{quote}You'll need to ask permissions to insert files here. {quote}
+ 
+h3. Notes
+- Tested with Confluence Questions Posts both Linked and Not-Linked to Spaces within the Instance; same message appears 
+- On the Confluence Question Post that was linked to a Space, the User is a Space Admin and has permissions to Add Attachments
+
+h3.Workaround
+Add the Attachment to a Confluence Page or other file sharing site and link to the Page on the Confluence Questions Post</description>
+    <reporterName>Shawn Cranford</reporterName>
+    <creationDate>2017-06-08</creationDate>
+</issueEntity>
